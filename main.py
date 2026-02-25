@@ -1,16 +1,36 @@
-# This is a sample Python script.
+import os
+import random
 
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
-
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
+import chess
 
 
-# Press the green button in the gutter to run the script.
+def play_engine():
+    board = chess.Board()
+    print('-Game Started-')
+    while not board.is_game_over():
+        os.system('cls' if os.name == 'nt' else 'clear')  # clear terminal
+        print(board)
+        print(f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
+        if board.turn == chess.WHITE:
+            move_uci = input('Enter your move (SAN, e.g. e4, Nf3): ')
+            try:
+                move = board.parse_san(move_uci)
+                if move in board.legal_moves:
+                    board.push(move)
+                else:
+                    print("Invalid move. Try again.")
+            except ValueError:
+                print("Notation not recognized. Use 'e4', 'Nf3', etc.")
+        else:
+            print('Engine is thinking...')
+            engine_move = random.choice(list(board.legal_moves))
+            readable_move = board.san(engine_move)
+            board.push(engine_move)
+            print(f"Engine played: {readable_move}")
+
+
+    print(f"Game over. Result: {board.result()}")
+
+
 if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    play_engine()
