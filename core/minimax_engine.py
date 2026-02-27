@@ -1,26 +1,25 @@
-import random
-from time import sleep, time
+from abc import abstractmethod, ABCMeta, ABC
+from time import time
 
 import chess
 
 
-class BasicEngine():
-    def __init__(self, depth: int, name: str = "Beansie"):
-        self.name = name
+class MinimaxEngine(ABC):
+    def __init__(self, depth: int, name: str):
         self.depth = depth
+        self.name = name
         self.evaluation_count = 0
-        self.piece_values = {
-            chess.PAWN: 100,
-            chess.KNIGHT: 320,
-            chess.BISHOP: 330,
-            chess.ROOK: 500,
-            chess.QUEEN: 900,
-            chess.KING: 20000
-        }
 
+    @abstractmethod
     def evaluate(self, board: chess.Board):
         """
-        Snapshot logic: Just looks at the current board and returns a number.
+        Snapshot evaluation logic: Looks at the current board and returns a score.
+        """
+        raise NotImplementedError
+
+    def _evaluate(self, board: chess.Board):
+        """
+        Core board evaluation logic: Checks for checkmate and returns a score.
         """
         self.evaluation_count += 1
 
@@ -30,20 +29,14 @@ class BasicEngine():
             else:
                 return 99999  # White won
 
-        material_score = 0
-
-        for piece_type, piece_value in self.piece_values.items():
-            material_score += len(board.pieces(piece_type, chess.WHITE)) * piece_value
-            material_score -= len(board.pieces(piece_type, chess.BLACK)) * piece_value
-
-        return material_score
+        return self.evaluate(board)
 
     def search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float, beta: int | float):
         """
         The 'Brain' logic: Looks ahead using Minimax/Alpha-Beta.
         """
         if depth == 0 or board.is_game_over():
-            return self.evaluate(board)
+            return self._evaluate(board)
 
         if is_maximizing:
             best_score = -float('inf')  # White's turn

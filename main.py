@@ -1,13 +1,10 @@
-import os
-import subprocess
-
 import chess
 
-from basic_engine import BasicEngine
+from engines.materialist import MaterialistEngine
 
 
 def play_engine():
-    engine = BasicEngine(depth=5)
+    engine = MaterialistEngine(depth=5)
     board = chess.Board()
     while not board.is_game_over():
         # subprocess.run(['cls' if os.name == 'nt' else 'clear'], shell=True)
