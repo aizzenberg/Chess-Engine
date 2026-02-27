@@ -7,11 +7,11 @@ from basic_engine import BasicEngine
 
 
 def play_engine():
-    engine = BasicEngine(depth=4)
+    engine = BasicEngine(depth=5)
     board = chess.Board()
     while not board.is_game_over():
         # subprocess.run(['cls' if os.name == 'nt' else 'clear'], shell=True)
-        print(f'+ Game against "{engine.name}" | Move: {board.fullmove_number} +')
+        print(f'+ Game against "{engine.name}" d={engine.depth} | Move: {board.fullmove_number} +')
         print(f"> {'White' if board.turn == chess.WHITE else 'Black'}", end='\n\n')
         print(board)
         if board.turn == chess.WHITE:
