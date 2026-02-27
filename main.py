@@ -1,16 +1,16 @@
-import os
-import random
-
 import chess
+
+from engines.materialist import MaterialistEngine
 
 
 def play_engine():
+    engine = MaterialistEngine(depth=5)
     board = chess.Board()
-    print('-Game Started-')
     while not board.is_game_over():
-        os.system('cls' if os.name == 'nt' else 'clear')  # clear terminal
+        # subprocess.run(['cls' if os.name == 'nt' else 'clear'], shell=True)
+        print(f'+ Game against "{engine.name}" d={engine.depth} | Move: {board.fullmove_number} +')
+        print(f"> {'White' if board.turn == chess.WHITE else 'Black'}", end='\n\n')
         print(board)
-        print(f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}")
         if board.turn == chess.WHITE:
             move_uci = input('Enter your move (SAN, e.g. e4, Nf3): ')
             try:
@@ -22,12 +22,10 @@ def play_engine():
             except ValueError:
                 print("Notation not recognized. Use 'e4', 'Nf3', etc.")
         else:
-            print('Engine is thinking...')
-            engine_move = random.choice(list(board.legal_moves))
-            readable_move = board.san(engine_move)
+            print(f'"{engine.name}" is thinking...')
+            engine_move = engine.get_best_move(board)
+            print(f'"{engine.name}" played: {board.san(engine_move)}')
             board.push(engine_move)
-            print(f"Engine played: {readable_move}")
-
 
     print(f"Game over. Result: {board.result()}")
 
