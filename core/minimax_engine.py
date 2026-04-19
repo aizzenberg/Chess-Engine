@@ -27,6 +27,13 @@ class MinimaxEngine(ABC):
         self.evaluation_count = 0
         start_time = time()
 
+        # --- AGING LOGIC START ---
+        # Divide all history scores by 2 to favor recent search results
+        for f in range(64):
+            for t in range(64):
+                self.history[f][t] >>= 1
+        # --- AGING LOGIC END ---
+
         is_white = board.turn == chess.WHITE
         best_move = None
         best_score = -float('inf') if is_white else float('inf')
@@ -56,6 +63,7 @@ class MinimaxEngine(ABC):
 
         print(f"Engine thought for {end_time - start_time:.2f} seconds")
         print(f"Positions evaluated: {self.evaluation_count}")
+        print(f"Evaluation: {best_score}")
         return best_move
 
     def _search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float,
@@ -63,7 +71,7 @@ class MinimaxEngine(ABC):
         """
         The 'Brain' logic: Looks ahead using Minimax/Alpha-Beta.
         """
-        if board.is_repetition(2):
+        if board.is_repetition(3):
             return 0
 
         if depth == 0 or board.is_game_over():
