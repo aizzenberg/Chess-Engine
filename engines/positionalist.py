@@ -139,8 +139,54 @@ class PositionalistEngine(MinimaxEngine):
 
         return positional_score
 
+    def _eval_mobility_score(self, board: chess.Board) -> int:
+
+        your_color = board.turn
+        opp_color = not your_color
+
+        your_pieces = board.occupied_co[your_color]
+        opp_pieces = board.occupied_co[opp_color]
+
+        your_pawns_attacks = 0
+        for square in board.pieces(chess.PAWN, your_color):
+            your_pawns_attacks |= chess.BB_PAWN_ATTACKS[your_color][square]
+
+        opp_pawns_attacks = 0
+        for square in board.pieces(chess.PAWN, opp_color):
+            opp_pawns_attacks |= chess.BB_PAWN_ATTACKS[opp_color][square]
+
+        # Points per each safe square available
+        weights = {
+            chess.QUEEN: 0.3,
+            chess.ROOK: 0.57,
+            chess.BISHOP: 0.62,
+            chess.KNIGHT: 2
+        }
+
+        def get_color_mobility(color: chess.Color, enemy_pawn_attacks_mask: chess.Bitboard,
+                               friendly_mask: chess.Bitboard):
+            total = 0
+
+            for piece, weight in weights.items():
+                # Logic: Attacks x Pin Restriction - Own Pieces - Enemy Pawn Attacks
+                for sq in board.pieces(piece, color):
+                    mask = board.attacks_mask(sq) & board.pin_mask(color, sq)
+                    mask &= ~friendly_mask  # Disregard moves onto friendly pieces
+                    mask &= ~enemy_pawn_attacks_mask  # Disregard moves into pawn fire
+
+                    total += mask.bit_count() * weight
+
+            return total
+
+        your_mobility = get_color_mobility(your_color, opp_pawns_attacks, your_pieces)
+        opp_mobility = get_color_mobility(opp_color, your_pawns_attacks, opp_pieces)
+
+        relative_score = your_mobility - opp_mobility
+        return relative_score if your_color == chess.WHITE else -relative_score
+
     def evaluate(self, board: chess.Board) -> int:
         material_score = self._eval_material_score(board)
         positional_score = self._eval_positional_score(board)
+        mobility_score = self._eval_mobility_score(board)
 
-        return material_score + positional_score
+        return material_score + positional_score + mobility_score
