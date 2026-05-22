@@ -1,4 +1,4 @@
-from abc import abstractmethod, ABCMeta, ABC
+from abc import abstractmethod, ABC
 from time import time
 
 import chess
@@ -61,8 +61,11 @@ class MinimaxEngine(ABC):
 
         end_time = time()
 
-        print(f"Engine thought for {end_time - start_time:.2f} seconds")
+        thinking_time = end_time - start_time
+
+        print(f"Engine thought for {thinking_time:.2f} seconds")
         print(f"Positions evaluated: {self.evaluation_count}")
+        print(f"NPS: ~{self.evaluation_count // thinking_time:,.0f}")
         print(f"Evaluation: {best_score}")
         return best_move
 

@@ -1,5 +1,3 @@
-from unicodedata import mirrored
-
 import chess
 from core.minimax_engine import MinimaxEngine
 
