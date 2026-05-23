@@ -1,10 +1,11 @@
 import chess
-from core.minimax_engine import MinimaxEngine
+
+from abstracts.base_evaluator import BaseEvaluator
 
 
-class MaterialistEngine(MinimaxEngine):
-    def __init__(self, depth: int, name: str = "Beansie"):
-        super().__init__(depth, name)
+class MaterialistEvaluator(BaseEvaluator):
+    def __init__(self):
+        super().__init__()
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,

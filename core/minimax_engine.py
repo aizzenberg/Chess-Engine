@@ -1,22 +1,19 @@
-from abc import abstractmethod, ABC
+from contextlib import contextmanager
 from time import time
 
 import chess
 
+from abstracts.base_evaluator import BaseEvaluator
+from core.move_picker import MovePicker
 
-class MinimaxEngine(ABC):
-    def __init__(self, depth: int, name: str):
+
+class MinimaxEngine:
+    def __init__(self, evaluator: BaseEvaluator, move_picker: MovePicker, depth: int, name: str):
         self.depth = depth
         self.name = name
+        self.mp = move_picker
+        self.eval = evaluator
         self.evaluation_count = 0
-        self.history = [[0 for _ in range(64)] for _ in range(64)]
-
-    @abstractmethod
-    def evaluate(self, board: chess.Board) -> int:
-        """
-        Snapshot evaluation logic: Looks at the current board and returns a score.
-        """
-        raise NotImplementedError
 
     def get_best_move(self, board: chess.Board):
         """
@@ -26,13 +23,10 @@ class MinimaxEngine(ABC):
         # Reset counter for this move
         self.evaluation_count = 0
         start_time = time()
+        self.eval.start_search(board)
 
-        # --- AGING LOGIC START ---
-        # Divide all history scores by 2 to favor recent search results
-        for f in range(64):
-            for t in range(64):
-                self.history[f][t] >>= 1
-        # --- AGING LOGIC END ---
+        # History aging
+        self.mp.halve_history()
 
         is_white = board.turn == chess.WHITE
         best_move = None
@@ -40,10 +34,12 @@ class MinimaxEngine(ABC):
         alpha = -float('inf')
         beta = float('inf')
 
-        for move in self._get_ordered_moves(board):
+        for move in self.mp.get_moves(board):
+            self.eval.push_move(board, move)
             board.push(move)
             score = self._search(board, self.depth - 1, is_maximizing=not is_white, alpha=alpha, beta=beta)
             board.pop()
+            self.eval.pop_move(board)
 
             if is_white:
                 alpha = max(alpha, score)
@@ -69,6 +65,16 @@ class MinimaxEngine(ABC):
         print(f"Evaluation: {best_score}")
         return best_move
 
+    @contextmanager
+    def _simulate_move(self, board: chess.Board, move: chess.Move):
+        self.eval.push_move(board, move)
+        board.push(move)
+        try:
+            yield
+        finally:
+            board.pop()
+            self.eval.pop_move(board)
+
     def _search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float,
                 beta: int | float) -> int:
         """
@@ -82,29 +88,29 @@ class MinimaxEngine(ABC):
 
         if is_maximizing:
             best_score = -float('inf')  # White's turn
-            for move in self._get_ordered_moves(board):
-                board.push(move)
-                # Recursion: See what Black does in response
-                score = self._search(board, depth - 1, False, alpha, beta)
-                board.pop()
+            for move in self.mp.get_moves(board):
+                with self._simulate_move(board, move):
+                    # Recursion: See what Black does in response
+                    score = self._search(board, depth - 1, False, alpha, beta)
+
                 best_score = max(score, best_score)
                 alpha = max(alpha, best_score)
 
                 if best_score >= beta:
-                    self.history[move.from_square][move.to_square] += depth * depth
+                    self.mp.record_cutoff(move, depth)
                     break
         else:
             best_score = float('inf')  # Black's turn
-            for move in self._get_ordered_moves(board):
-                board.push(move)
-                # Recursion: See what White does in response
-                score = self._search(board, depth - 1, True, alpha, beta)
-                board.pop()
+            for move in self.mp.get_moves(board):
+                with self._simulate_move(board, move):
+                    # Recursion: See what White does in response
+                    score = self._search(board, depth - 1, True, alpha, beta)
+
                 best_score = min(score, best_score)
                 beta = min(beta, best_score)
 
                 if best_score <= alpha:
-                    self.history[move.from_square][move.to_square] += depth * depth
+                    self.mp.record_cutoff(move, depth)
                     break
 
         return best_score
@@ -113,7 +119,7 @@ class MinimaxEngine(ABC):
                            beta: int | float):
         standing_pat = self._evaluate(board, depth)
 
-        moves = [move for move in self._get_ordered_moves(board) if board.is_capture(move)]
+        moves = [move for move in self.mp.get_moves(board) if board.is_capture(move)]
 
         if is_maximizing:
             # If the current board is already better than opponent can let us get, no need to capture more
@@ -122,10 +128,10 @@ class MinimaxEngine(ABC):
             alpha = max(alpha, standing_pat)
 
             for move in moves:
-                board.push(move)
-                # Recursion: See what Black does in response
-                score = self._quiescence_search(board, depth, False, alpha=alpha, beta=beta)
-                board.pop()
+                with self._simulate_move(board, move):
+                    # Recursion: See what Black does in response
+                    score = self._quiescence_search(board, depth, False, alpha=alpha, beta=beta)
+
                 alpha = max(alpha, score)
 
                 if alpha >= beta:
@@ -139,10 +145,10 @@ class MinimaxEngine(ABC):
             beta = min(beta, standing_pat)
 
             for move in moves:
-                board.push(move)
-                # Recursion: See what White does in response
-                score = self._quiescence_search(board, depth, True, alpha=alpha, beta=beta)
-                board.pop()
+                with self._simulate_move(board, move):
+                    # Recursion: See what White does in response
+                    score = self._quiescence_search(board, depth, True, alpha=alpha, beta=beta)
+
                 beta = min(beta, score)
 
                 if beta <= alpha:
@@ -164,7 +170,4 @@ class MinimaxEngine(ABC):
             else:
                 return mate_score  # White won
 
-        return self.evaluate(board)
-
-    def _get_ordered_moves(self, board: chess.Board) -> list[chess.Move]:
-        return list(board.legal_moves)
+        return self.eval.evaluate(board)
