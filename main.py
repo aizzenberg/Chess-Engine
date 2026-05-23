@@ -1,7 +1,6 @@
 import chess
 
 from core.factory import get_engine
-from engines.materialist import MaterialistEngine
 
 
 def play_engine():

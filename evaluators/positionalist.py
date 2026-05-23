@@ -1,10 +1,11 @@
 import chess
-from core.minimax_engine import MinimaxEngine
+
+from abstracts.base_evaluator import BaseEvaluator
 
 
-class PositionalistEngine(MinimaxEngine):
-    def __init__(self, depth: int, name: str = "Tuko"):
-        super().__init__(depth, name)
+class PositionalistEvaluator(BaseEvaluator):
+    def __init__(self):
+        super().__init__()
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,
@@ -81,38 +82,6 @@ class PositionalistEngine(MinimaxEngine):
                 20, 30, 10, 0, 0, 10, 30, 20
             ]
         }
-
-    def _get_ordered_moves(self, board: chess.Board) -> list[chess.Move]:
-        moves = list(board.legal_moves)
-
-        # We use a lambda to calculate the score for each move
-        # reverse=True ensures the HIGH scores are checked first
-        moves.sort(key=lambda move: self._score_move(board, move), reverse=True)
-
-        return moves
-
-    def _score_move(self, board: chess.Board, move: chess.Move) -> int:
-        # 1. Handle Captures
-        if board.is_capture(move):
-            # Default value for en passant victims (always a pawn)
-            victim_type = chess.PAWN
-
-            # Check what is actually on the square
-            victim_piece = board.piece_at(move.to_square)
-            if victim_piece:
-                victim_type = victim_piece.piece_type
-
-            attacker_type = board.piece_at(move.from_square).piece_type
-
-            # MVV-LVA Formula
-            return 100000 + (self.piece_values[victim_type] * 10) - self.piece_values[attacker_type]
-
-        # 2. Handle Promotions
-        if move.promotion:
-            return 90000 + self.piece_values[move.promotion]
-
-        # 3. Check the History Table for "Quiet" moves
-        return self.history[move.from_square][move.to_square]
 
     def _eval_material_score(self, board: chess.Board) -> int:
         material_score = 0
