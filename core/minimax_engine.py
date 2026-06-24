@@ -14,6 +14,7 @@ class MinimaxEngine:
         self.mp = move_picker
         self.eval = evaluator
         self.evaluation_count = 0
+        self.nps_stack = []
 
     def get_best_move(self, board: chess.Board):
         """
@@ -58,10 +59,12 @@ class MinimaxEngine:
         end_time = time()
 
         thinking_time = end_time - start_time
+        nps = self.evaluation_count // thinking_time
+        self.nps_stack.append(nps)
 
         print(f"Engine thought for {thinking_time:.2f} seconds")
         print(f"Positions evaluated: {self.evaluation_count}")
-        print(f"NPS: ~{self.evaluation_count // thinking_time:,.0f}")
+        print(f"NPS: ~{nps} | avg: ~{sum(self.nps_stack) // len(self.nps_stack)}")
         print(f"Evaluation: {best_score}")
         return best_move
 
