@@ -3,7 +3,7 @@ import chess
 from abstracts.base_evaluator import BaseEvaluator
 
 
-class MaterialistEvaluator(BaseEvaluator):
+class MaterialEvaluator(BaseEvaluator):
     def __init__(self):
         super().__init__()
         self.piece_values = {

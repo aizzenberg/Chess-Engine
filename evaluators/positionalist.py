@@ -3,9 +3,9 @@ import chess
 from abstracts.base_evaluator import BaseEvaluator
 
 
-class PositionalistEvaluator(BaseEvaluator):
+class PositionalEvaluator(BaseEvaluator):
     def __init__(self):
-        super().__init__()
+        self.score_stack = []
         self.piece_values = {
             chess.PAWN: 100,
             chess.KNIGHT: 320,
@@ -83,6 +83,21 @@ class PositionalistEvaluator(BaseEvaluator):
             ]
         }
 
+        self._flip_pst_table()
+
+    def _flip_pst_table(self):
+        """
+        Vertically mirrors the pst tables, so that python-chess square indexing corresponds our visual representation
+        """
+        for table in self.pst_table.values():
+            for sqr_idx in range(len(table) // 2):
+                row = sqr_idx // 8
+                col = sqr_idx % 8
+                mir_idx = (7 - row) * 8 + col
+                mir = table[mir_idx]
+                table[mir_idx] = table[sqr_idx]
+                table[sqr_idx] = mir
+
     def _eval_material_score(self, board: chess.Board) -> int:
         material_score = 0
 
@@ -151,9 +166,89 @@ class PositionalistEvaluator(BaseEvaluator):
         relative_score = your_mobility - opp_mobility
         return relative_score if your_color == chess.WHITE else -relative_score
 
-    def evaluate(self, board: chess.Board) -> int:
+    def start_search(self, board: chess.Board):
         material_score = self._eval_material_score(board)
         positional_score = self._eval_positional_score(board)
+
+        self.score_stack = [material_score + positional_score]
+
+    def push_move(self, board: chess.Board, move: chess.Move):
+        current_score = self.score_stack[-1]
+
+        actor = board.piece_at(move.from_square)
+        captured = board.piece_at(move.to_square)
+
+        actor_piece_pst = self.pst_table[actor.piece_type]
+
+        # --- 1. Actor PST Delta (Normal Move) ---
+        if actor.color == chess.WHITE:
+            current_score += actor_piece_pst[move.to_square] - actor_piece_pst[move.from_square]
+        else:
+            from_square = chess.square_mirror(move.from_square)
+            to_square = chess.square_mirror(move.to_square)
+            current_score -= actor_piece_pst[to_square] - actor_piece_pst[from_square]
+
+        # --- 2. Edge Case: Castling (Rook Delta) ---
+        if board.is_castling(move):
+            rook_pst = self.pst_table[chess.ROOK]
+            delta = 0
+            match move.to_square:
+                case chess.G1 | chess.G8:
+                    delta = rook_pst[chess.F1] - rook_pst[chess.H1]
+                case chess.C1 | chess.C8:
+                    delta = rook_pst[chess.D1] - rook_pst[chess.A1]
+
+            current_score += delta if actor.color == chess.WHITE else -delta
+            self.score_stack.append(current_score)
+            return
+
+        # --- 3. Edge Case: En Passant (Victim Delta) ---
+        if board.is_en_passant(move):
+            shift = -8 if actor.color == chess.WHITE else 8
+            pawn_value = self.piece_values[chess.PAWN]
+            victim_position = move.to_square + shift
+
+            if actor.color == chess.WHITE:
+                victim_position = chess.square_mirror(victim_position)
+                current_score += pawn_value + self.pst_table[chess.PAWN][victim_position]
+            else:
+                current_score -= pawn_value + self.pst_table[chess.PAWN][victim_position]
+
+            self.score_stack.append(current_score)
+            return
+
+        # --- 4. Edge Case: Promotion (Piece Transformation) ---
+        if promoted := move.promotion:
+            # Undo the Pawn's PST/Material and apply the Promoted piece's PST/Material
+            if actor.color == chess.WHITE:
+                current_score -= actor_piece_pst[move.to_square] + self.piece_values[chess.PAWN]
+                current_score += self.pst_table[promoted][move.to_square] + self.piece_values[promoted]
+            else:
+                to_square = chess.square_mirror(move.to_square)
+                current_score += actor_piece_pst[to_square] + self.piece_values[chess.PAWN]
+                current_score -= self.pst_table[promoted][to_square] + self.piece_values[promoted]
+
+
+        # --- 5. Capture Delta (Victim Removal) ---
+        if captured is None:
+            self.score_stack.append(current_score)
+            return
+
+        if captured.color == chess.WHITE:
+            current_score -= self.pst_table[captured.piece_type][move.to_square]
+            current_score -= self.piece_values[captured.piece_type]
+        else:
+            to_square = chess.square_mirror(move.to_square)
+            current_score += self.pst_table[captured.piece_type][to_square]
+            current_score += self.piece_values[captured.piece_type]
+
+        self.score_stack.append(current_score)
+
+    def pop_move(self, board: chess.Board):
+        self.score_stack.pop()
+
+    def evaluate(self, board: chess.Board) -> int:
+        base_score = self.score_stack[-1]
         mobility_score = self._eval_mobility_score(board)
 
-        return material_score + positional_score + mobility_score
+        return base_score + mobility_score
