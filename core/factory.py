@@ -8,6 +8,7 @@ def get_engine(engine_id: str, depth: int):
     engines = {
         'gen1': MinimaxEngine(evaluator=MaterialEvaluator(), move_picker=MovePicker(), depth=depth, name="Beansie"),
         'gen2': MinimaxEngine(evaluator=PositionalEvaluator(), move_picker=MovePicker(), depth=depth, name="Tuko"),
+        'gen2.1': MinimaxEngine(evaluator=PositionalEvaluator(count_mobility=True), move_picker=MovePicker(), depth=depth, name="Tuko-coco"),
     }
 
     selected_engine = engines.get(engine_id)

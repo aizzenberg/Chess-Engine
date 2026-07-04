@@ -4,7 +4,8 @@ from abstracts.base_evaluator import BaseEvaluator
 
 
 class PositionalEvaluator(BaseEvaluator):
-    def __init__(self):
+    def __init__(self, count_mobility: bool = False):
+        self.count_mobility = count_mobility
         self.score_stack = []
         self.piece_values = {
             chess.PAWN: 100,
@@ -249,6 +250,9 @@ class PositionalEvaluator(BaseEvaluator):
 
     def evaluate(self, board: chess.Board) -> int:
         base_score = self.score_stack[-1]
+        if not self.count_mobility:
+            return base_score
+
         mobility_score = self._eval_mobility_score(board)
 
         return base_score + mobility_score
