@@ -15,7 +15,15 @@ class MinimaxEngine:
         self.name = name
         self.mp = move_picker
         self.eval = evaluator
-        self.evaluation_count = 0
+
+        # Performance Counters
+        self.nodes_count = 0  # Total search nodes visited
+        self.eval_count = 0  # Leaf evaluations called
+        self.beta_cutoffs = 0  # Total beta cutoffs
+        self.first_move_cutoffs = 0  # Cutoffs on index 0
+        self.avg_first_move_cutoffs = 0  # Avg accumulator for first move cutoffs
+        self.nodes_at_depth = {}  # EBF Tracking: Node counts indexed by depth reached
+
         self.nps_stack = []
         self.time_stack = []
 
@@ -57,8 +65,12 @@ class MinimaxEngine:
         The Main API Method.
         The UI (Terminal or App) calls this.
         """
-        # Reset counter for this move
-        self.evaluation_count = 0
+        # Reset counters for the new search
+        self.nodes_count = 0
+        self.eval_count = 0
+        self.beta_cutoffs = 0
+        self.first_move_cutoffs = 0
+
         start_time = time()
         self.eval.start_search(board)
 
@@ -71,12 +83,13 @@ class MinimaxEngine:
         alpha = -float('inf')
         beta = float('inf')
 
-        for move in self.mp.get_moves(board):
-            self.eval.push_move(board, move)
-            board.push(move)
-            score = self._search(board, self.depth - 1, is_maximizing=not is_white, alpha=alpha, beta=beta)
-            board.pop()
-            self.eval.pop_move(board)
+        # Root level count
+        self.nodes_count += 1
+        self._log_node_at_depth(self.ply)
+
+        for move in self.mp.get_moves(board, self.ply):
+            with self._simulate_move(board, move):
+                score = self._search(board, self.depth - 1, is_maximizing=not is_white, alpha=alpha, beta=beta)
 
             if is_white:
                 alpha = max(alpha, score)
@@ -95,15 +108,49 @@ class MinimaxEngine:
         end_time = time()
 
         thinking_time = end_time - start_time
-        nps = self.evaluation_count // thinking_time
+
+        # Standard engine NPS uses total nodes visited
+        nps = int(self.nodes_count / thinking_time)
+        evals_per_sec = int(self.eval_count / thinking_time)
+
         self.nps_stack.append(nps)
         self.time_stack.append(thinking_time)
 
-        print(f"Engine thought for {thinking_time:.2f} seconds")
-        print(f"Positions evaluated: {self.evaluation_count}")
-        print(f"NPS: ~{nps} | avg: ~{sum(self.nps_stack) // len(self.nps_stack)}")
-        print(f"Evaluation: {self._format_score(best_score)}")
+        self._print_summary(thinking_time=thinking_time, nps=nps, evals_per_sec=evals_per_sec, best_score=best_score,
+                            show_ebf=True)
+
         return best_move
+
+    def _print_summary(self, thinking_time, nps, best_score, evals_per_sec, show_ebf):
+        cutoff_rate = (self.first_move_cutoffs / self.beta_cutoffs * 100) if self.beta_cutoffs > 0 else 0.0
+        self.avg_first_move_cutoffs += (cutoff_rate - self.avg_first_move_cutoffs) / len(self.nps_stack)
+
+        print(f"\n--- Search Summary [{self.name}] ---")
+        print(f"Time:                {thinking_time:.2f}s")
+        print(f"Nodes searched:      {self.nodes_count:,}")
+        print(f"Leaf evaluations:    {self.eval_count:,}")
+        print(f"NPS (Total Nodes):   ~{nps:,} | avg: ~{sum(self.nps_stack) // len(self.nps_stack):,}")
+        print(f"Leaf Evals / sec:    ~{evals_per_sec:,}")
+        print(
+            f"First-move Cutoffs:  {cutoff_rate:.1f}% ({self.first_move_cutoffs:,}/{self.beta_cutoffs:,})"
+            f" | avg: {self.avg_first_move_cutoffs:.1f}%"
+        )
+
+        if show_ebf:
+            # Log EBF per depth layer
+            print("Depth Breakdown & EBF:")
+            sorted_depths = sorted(self.nodes_at_depth.keys())
+            for d in sorted_depths:
+                nodes = self.nodes_at_depth[d]
+                prev_nodes = self.nodes_at_depth.get(d - 1, None)
+
+                if prev_nodes and prev_nodes > 0:
+                    ebf = nodes / prev_nodes
+                    print(f"  Ply {d:2d} | Nodes: {nodes:10,} | EBF: {ebf:.2f}")
+                else:
+                    print(f"  Ply {d:2d} | Nodes: {nodes:10,} | EBF: N/A (Root/Top)")
+
+        print(f"Evaluation:          {self._format_score(best_score)}", end="\n---\n")
 
     def _format_score(self, score: float):
         if score > 99000:
@@ -115,7 +162,11 @@ class MinimaxEngine:
             moves = ply // 2
             return f'-M{moves}'
 
-        return f'{score / 100:+.1f}'
+        return f'{score / 100:+.2f}'
+
+    def _log_node_at_depth(self, depth: int):
+        """Track nodes encountered at each depth layer"""
+        self.nodes_at_depth[depth] = self.nodes_at_depth.get(depth, 0) + 1
 
     @contextmanager
     def _simulate_move(self, board: chess.Board, move: chess.Move):
@@ -134,28 +185,34 @@ class MinimaxEngine:
         """
         The 'Brain' logic: Looks ahead using Minimax/Alpha-Beta.
         """
+        # Count every node visited upon entering search
+        self.nodes_count += 1
+        self._log_node_at_depth(self.ply)
+
         if board.is_repetition(2) or board.is_fifty_moves():
             return 0
 
         if depth == 0 or board.is_game_over():
-            return self._quiescence_search(board, depth, is_maximizing, alpha, beta)
+            return self._quiescence_search(board, is_maximizing, alpha, beta)
 
         if is_maximizing:
             best_score = -float('inf')  # White's turn
-            for move in self.mp.get_moves(board):
+            for idx, move in enumerate(self.mp.get_moves(board, self.ply)):
                 with self._simulate_move(board, move):
                     # Recursion: See what Black does in response
                     score = self._search(board, depth - 1, False, alpha, beta)
-
                 best_score = max(score, best_score)
                 alpha = max(alpha, best_score)
 
                 if best_score >= beta:
-                    self.mp.record_cutoff(move, depth)
+                    self.beta_cutoffs += 1
+                    if idx == 0:
+                        self.first_move_cutoffs += 1
+                    self.mp.record_cutoff(move, depth, self.ply, board.is_capture(move))
                     break
         else:
             best_score = float('inf')  # Black's turn
-            for move in self.mp.get_moves(board):
+            for idx, move in enumerate(self.mp.get_moves(board, self.ply)):
                 with self._simulate_move(board, move):
                     # Recursion: See what White does in response
                     score = self._search(board, depth - 1, True, alpha, beta)
@@ -164,15 +221,21 @@ class MinimaxEngine:
                 beta = min(beta, best_score)
 
                 if best_score <= alpha:
-                    self.mp.record_cutoff(move, depth)
+                    self.beta_cutoffs += 1
+                    if idx == 0:
+                        self.first_move_cutoffs += 1
+                    self.mp.record_cutoff(move, depth, self.ply, board.is_capture(move))
                     break
 
         return best_score
 
-    def _quiescence_search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float,
+    def _quiescence_search(self, board: chess.Board, is_maximizing: bool, alpha: int | float,
                            beta: int | float):
+        # Count every node visited upon entering search
+        self.nodes_count += 1
+
         is_check = board.is_check()
-        legal_moves = self.mp.get_moves(board)
+        legal_moves = self.mp.get_moves(board, self.ply)
 
         if not legal_moves:
             if is_check:
@@ -189,39 +252,49 @@ class MinimaxEngine:
         else:
             # Looking only through captures to get quiescence position
             moves = [move for move in legal_moves if board.is_capture(move)]
-            standing_pat = self._evaluate(board, depth)
+            standing_pat = self._evaluate(board)
 
         if is_maximizing:
             # If the current board is already better than opponent can let us get, no need to capture more
             if standing_pat >= beta:
+                # No move tried, so we don't count cutoff at all
                 return beta
+
             alpha = max(alpha, standing_pat)
 
-            for move in moves:
+            for idx, move in enumerate(moves):
                 with self._simulate_move(board, move):
                     # Recursion: See what Black does in response
-                    score = self._quiescence_search(board, depth, False, alpha=alpha, beta=beta)
+                    score = self._quiescence_search(board, False, alpha=alpha, beta=beta)
 
                 alpha = max(alpha, score)
 
                 if alpha >= beta:
+                    self.beta_cutoffs += 1
+                    if idx == 0:
+                        self.first_move_cutoffs += 1
                     break
 
             return alpha
         else:
             # If the current board is already better than opponent can let us get, no need to capture more
             if standing_pat <= alpha:
+                self.beta_cutoffs += 1  # Cutoff occurred, but no move was tried
                 return alpha
+
             beta = min(beta, standing_pat)
 
-            for move in moves:
+            for idx, move in enumerate(moves):
                 with self._simulate_move(board, move):
                     # Recursion: See what White does in response
-                    score = self._quiescence_search(board, depth, True, alpha=alpha, beta=beta)
+                    score = self._quiescence_search(board, True, alpha=alpha, beta=beta)
 
                 beta = min(beta, score)
 
                 if beta <= alpha:
+                    self.beta_cutoffs += 1
+                    if idx == 0:
+                        self.first_move_cutoffs += 1
                     break
 
             return beta
@@ -235,11 +308,15 @@ class MinimaxEngine:
         else:
             return mate_score  # White won
 
-    def _evaluate(self, board: chess.Board, depth: int):
+    def _evaluate(self, board: chess.Board):
         """
         Core board evaluation logic: Checks for checkmate and returns a score.
         """
-        self.evaluation_count += 1
+        self.eval_count += 1
+
+        # If the board physically has no mating material left, the score is exactly 0
+        if board.is_insufficient_material():
+            return 0
 
         if board.is_checkmate():
             return self._get_mate_score(board.turn, self.ply)
