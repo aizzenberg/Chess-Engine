@@ -35,7 +35,7 @@ class MovePicker:
         # 2. Update History Table (cap at 500,000 so it never beats captures)
         inc = depth * depth
         current = self.history[move.from_square][move.to_square]
-        self.history[move.from_square][move.to_square] = max(current + inc, 500_000)
+        self.history[move.from_square][move.to_square] = min(current + inc, 500_000)
 
     def get_moves(self, board: chess.Board, ply: int) -> list[chess.Move]:
         moves = list(board.legal_moves)

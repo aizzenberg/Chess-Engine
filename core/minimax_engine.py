@@ -117,7 +117,7 @@ class MinimaxEngine:
         self.time_stack.append(thinking_time)
 
         self._print_summary(thinking_time=thinking_time, nps=nps, evals_per_sec=evals_per_sec, best_score=best_score,
-                            show_ebf=False)
+                            show_ebf=True)
 
         return best_move
 
@@ -162,7 +162,7 @@ class MinimaxEngine:
             moves = ply // 2
             return f'-M{moves}'
 
-        return f'{score / 100:+.1f}'
+        return f'{score / 100:+.2f}'
 
     def _log_node_at_depth(self, depth: int):
         """Track nodes encountered at each depth layer"""
@@ -193,7 +193,7 @@ class MinimaxEngine:
             return 0
 
         if depth == 0 or board.is_game_over():
-            return self._quiescence_search(board, depth, is_maximizing, alpha, beta)
+            return self._quiescence_search(board, is_maximizing, alpha, beta)
 
         if is_maximizing:
             best_score = -float('inf')  # White's turn
@@ -229,7 +229,7 @@ class MinimaxEngine:
 
         return best_score
 
-    def _quiescence_search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float,
+    def _quiescence_search(self, board: chess.Board, is_maximizing: bool, alpha: int | float,
                            beta: int | float):
         # Count every node visited upon entering search
         self.nodes_count += 1
@@ -252,7 +252,7 @@ class MinimaxEngine:
         else:
             # Looking only through captures to get quiescence position
             moves = [move for move in legal_moves if board.is_capture(move)]
-            standing_pat = self._evaluate(board, depth)
+            standing_pat = self._evaluate(board)
 
         if is_maximizing:
             # If the current board is already better than opponent can let us get, no need to capture more
@@ -265,7 +265,7 @@ class MinimaxEngine:
             for idx, move in enumerate(moves):
                 with self._simulate_move(board, move):
                     # Recursion: See what Black does in response
-                    score = self._quiescence_search(board, depth, False, alpha=alpha, beta=beta)
+                    score = self._quiescence_search(board, False, alpha=alpha, beta=beta)
 
                 alpha = max(alpha, score)
 
@@ -287,7 +287,7 @@ class MinimaxEngine:
             for idx, move in enumerate(moves):
                 with self._simulate_move(board, move):
                     # Recursion: See what White does in response
-                    score = self._quiescence_search(board, depth, True, alpha=alpha, beta=beta)
+                    score = self._quiescence_search(board, True, alpha=alpha, beta=beta)
 
                 beta = min(beta, score)
 
@@ -308,7 +308,7 @@ class MinimaxEngine:
         else:
             return mate_score  # White won
 
-    def _evaluate(self, board: chess.Board, depth: int):
+    def _evaluate(self, board: chess.Board):
         """
         Core board evaluation logic: Checks for checkmate and returns a score.
         """
