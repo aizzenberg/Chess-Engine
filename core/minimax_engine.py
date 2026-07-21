@@ -142,7 +142,7 @@ class MinimaxEngine:
 
         if is_maximizing:
             best_score = -float('inf')  # White's turn
-            for move in self.mp.get_moves(board):
+            for idx, move in enumerate(self.mp.get_moves(board, self.ply)):
                 with self._simulate_move(board, move):
                     # Recursion: See what Black does in response
                     score = self._search(board, depth - 1, False, alpha, beta)
@@ -152,10 +152,11 @@ class MinimaxEngine:
 
                 if best_score >= beta:
                     self.mp.record_cutoff(move, depth)
+                    self.mp.record_cutoff(move, depth, self.ply, board.is_capture(move))
                     break
         else:
             best_score = float('inf')  # Black's turn
-            for move in self.mp.get_moves(board):
+            for idx, move in enumerate(self.mp.get_moves(board, self.ply)):
                 with self._simulate_move(board, move):
                     # Recursion: See what White does in response
                     score = self._search(board, depth - 1, True, alpha, beta)
@@ -165,6 +166,7 @@ class MinimaxEngine:
 
                 if best_score <= alpha:
                     self.mp.record_cutoff(move, depth)
+                    self.mp.record_cutoff(move, depth, self.ply, board.is_capture(move))
                     break
 
         return best_score
@@ -172,7 +174,7 @@ class MinimaxEngine:
     def _quiescence_search(self, board: chess.Board, depth: int, is_maximizing: bool, alpha: int | float,
                            beta: int | float):
         is_check = board.is_check()
-        legal_moves = self.mp.get_moves(board)
+        legal_moves = self.mp.get_moves(board, self.ply)
 
         if not legal_moves:
             if is_check:
