@@ -1,0 +1,74 @@
+name: Build and Release Engine Binaries
+
+on:
+  # 1. Triggers automatically when you publish a release tag (e.g., v1.0.0)
+  push:
+    tags:
+      - 'v*.*.*'
+  # 2. Allows manual click-to-run from the GitHub Actions tab to test changes on master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux Server Production Build (enforces binary stripping for small size)
+          - os: ubuntu-latest
+            artifact_name: coco-engine-linux-x64
+            pyinstaller_flags: "--strip"
+
+          # macOS Apple Silicon M1/M2/M3 (omit --strip to prevent code-sign KILLED: 9 errors)
+          - os: macos-latest
+            artifact_name: coco-engine-darwin-arm64
+            pyinstaller_flags: ""
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install nuitka chess
+      #          python -m pip install -r requirements.txt
+
+      - name: Compile Native Binary with Nuitka
+        run: |
+          # Create the dist directory explicitly just to be safe
+          mkdir -p dist
+          
+          python -m nuitka \
+            --onefile \
+            --assume-yes-for-downloads \
+            --macos-sign-identity=- \
+            --output-dir=dist \
+            --output-filename=${{ matrix.artifact_name }} \
+            engine.py
+
+      - name: Upload Artifact for Manual Testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
+          retention-days: 7
+
+      - name: Attach Binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
