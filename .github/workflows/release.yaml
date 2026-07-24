@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           # Linux Server Production Build (enforces binary stripping for small size)
-          - os: ubuntu-latest
-            artifact_name: coco-engine-linux-x64
-            pyinstaller_flags: "--strip"
+          #          - os: ubuntu-22.04
+          #            artifact_name: coco-engine-linux-x64
+          #            pyinstaller_flags: "--strip"
 
           # macOS Apple Silicon M1/M2/M3 (omit --strip to prevent code-sign KILLED: 9 errors)
           - os: macos-latest
@@ -33,30 +33,79 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      # 1. Set up PyPy 3.11 natively on the runner
+      - name: Set up PyPy
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: 'pypy3.11'
           cache: 'pip'
 
-      - name: Install Dependencies
+      - name: Create Bundle Directory & Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install nuitka chess
-      #          python -m pip install -r requirements.txt
+          mkdir -p ./bundle/app
+          
+          # Dynamically copy codebase while excluding git/CI, local testbeds, and bytecode caches
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='bundle' \
+            --exclude='dist' \
+            --exclude='main.py' \
+            --exclude='__pycache__' \
+            --exclude='README.md' \
+            ./ ./bundle/app/
+          
+          # Locate native PyPy installation and copy it preserving symlinks and permissions (-a)
+          PYPY_DIR=$(dirname $(dirname $(which pypy3)))
+          cp -a "$PYPY_DIR" ./bundle/pypy_runtime
+          
+          # Install dependencies directly into the bundled PyPy runtime
+          ./bundle/pypy_runtime/bin/pypy3 -m pip install --no-cache-dir -r ./bundle/app/requirements.txt
 
-      - name: Compile Native Binary with Nuitka
+      - name: Build Atomic Self-Extracting Executable
         run: |
-          # Create the dist directory explicitly just to be safe
           mkdir -p dist
           
-          python -m nuitka \
-            --onefile \
-            --assume-yes-for-downloads \
-            --macos-sign-identity=- \
-            --output-dir=dist \
-            --output-filename=${{ matrix.artifact_name }} \
-            engine.py
+          cat << 'EOF' > dist/${{ matrix.artifact_name }}
+          #!/usr/bin/env bash
+          set -e
+          
+          # 1. Support hardened Linux servers by respecting TMPDIR before defaulting to /tmp
+          BASE_TMP="${TMPDIR:-/tmp}"
+          
+          # 2. Generate a deterministic SHA-256 / MD5 hash of the actual file content
+          CHECKSUM=$( (sha256sum "$0" 2>/dev/null || shasum -a 256 "$0" 2>/dev/null || md5sum "$0" 2>/dev/null || md5 -q "$0" 2>/dev/null) | awk '{print $1}' )
+          CACHE_DIR="${BASE_TMP}/coco-engine-cache-${CHECKSUM}"
+          
+          # 3. ATOMIC EXTRACTION: Prevent NimblePool concurrency crashes at server boot
+          if [ ! -f "$CACHE_DIR/.extraction_complete" ]; then
+            # Extract to a unique Process ID staging directory first
+            STAGING_DIR="${CACHE_DIR}.tmp.$$"
+            mkdir -p "$STAGING_DIR"
+          
+            # Re-create source code from a compressed binary archive stream we appended
+            ARCHIVE_LINE=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
+            tail -n+$ARCHIVE_LINE "$0" | tar xz -C "$STAGING_DIR" 2>/dev/null
+          
+            # Place a marker file indicating extraction finished successfully
+            touch "$STAGING_DIR/.extraction_complete"
+          
+            # Atomically move staging to final cache directory (ignores error if another worker won the race)
+            mv -n "$STAGING_DIR" "$CACHE_DIR" 2>/dev/null || true
+          
+            # Clean up staging folder if we lost the race to a concurrent worker
+            rm -rf "$STAGING_DIR" 2>/dev/null || true
+          fi
+          
+          # 4. Replace bash process in memory with PyPy, passing Erlang Port pipes and CLI args seamlessly
+          exec "$CACHE_DIR/pypy_runtime/bin/pypy3" "$CACHE_DIR/app/engine.py" "$@"
+          exit 0
+          __ARCHIVE_BELOW__
+          EOF
+          
+          # Compress bundle and append below bash stub
+          tar czf - -C ./bundle . >> dist/${{ matrix.artifact_name }}
+          chmod +x dist/${{ matrix.artifact_name }}
 
       - name: Upload Artifact for Manual Testing
         uses: actions/upload-artifact@v4
