@@ -9,12 +9,15 @@ from core.move_picker import MovePicker
 
 
 class MinimaxEngine:
-    def __init__(self, evaluator: BaseEvaluator, move_picker: MovePicker, depth: int, name: str):
-        self.depth = depth
+    def __init__(self, evaluator: BaseEvaluator, move_picker: MovePicker, default_depth: int, name: str,
+                 uci_mode: bool = False):
+        self.default_depth = default_depth
         self.ply = 0  # Distance from the root of the search
         self.name = name
         self.mp = move_picker
         self.eval = evaluator
+        self.uci_mode = uci_mode
+        self.stopped = False  # Abort toggle for UCI Handler
 
         # Performance Counters
         self.nodes_count = 0  # Total search nodes visited
@@ -60,11 +63,14 @@ class MinimaxEngine:
 
         return [line_nps, line_time]
 
-    def get_best_move(self, board: chess.Board):
+    def get_best_move(self, board: chess.Board, depth: int = None) -> tuple[chess.Move, float]:
         """
         The Main API Method.
         The UI (Terminal or App) calls this.
         """
+        if depth is None:
+            depth = self.default_depth
+
         # Reset counters for the new search
         self.nodes_count = 0
         self.eval_count = 0
@@ -85,11 +91,20 @@ class MinimaxEngine:
 
         # Root level count
         self.nodes_count += 1
-        self._log_node_at_depth(self.ply)
+        if not self.uci_mode:
+            self._log_node_at_depth(self.ply)
 
         for move in self.mp.get_moves(board, self.ply):
+            # 1. Break the root loop instantly if stopped
+            if self.stopped:
+                break
+
             with self._simulate_move(board, move):
-                score = self._search(board, self.depth - 1, is_maximizing=not is_white, alpha=alpha, beta=beta)
+                score = self._search(board, depth - 1, is_maximizing=not is_white, alpha=alpha, beta=beta)
+
+            # 2. If the search was aborted mid-evaluation, DO NOT trust or record the returned score!
+            if self.stopped:
+                break
 
             if is_white:
                 alpha = max(alpha, score)
@@ -105,21 +120,30 @@ class MinimaxEngine:
                     best_score = score
                     best_move = move
 
+        # 3. CRITICAL SAFETY FALLBACK: If stopped before move 0 finished, default to the first legal move
+        if best_move is None and board.legal_moves:
+            try:
+                best_move = next(iter(board.legal_moves))
+                best_score = 0.0
+            except StopIteration:
+                best_move = None
+
         end_time = time()
 
         thinking_time = end_time - start_time
 
         # Standard engine NPS uses total nodes visited
         nps = int(self.nodes_count / thinking_time)
-        evals_per_sec = int(self.eval_count / thinking_time)
-
         self.nps_stack.append(nps)
         self.time_stack.append(thinking_time)
 
-        self._print_summary(thinking_time=thinking_time, nps=nps, evals_per_sec=evals_per_sec, best_score=best_score,
-                            show_ebf=True)
+        if not self.uci_mode:
+            evals_per_sec = int(self.eval_count / thinking_time)
+            self._print_summary(thinking_time=thinking_time, nps=nps, evals_per_sec=evals_per_sec,
+                                best_score=best_score,
+                                show_ebf=True)
 
-        return best_move
+        return best_move, best_score
 
     def _print_summary(self, thinking_time, nps, best_score, evals_per_sec, show_ebf):
         cutoff_rate = (self.first_move_cutoffs / self.beta_cutoffs * 100) if self.beta_cutoffs > 0 else 0.0
@@ -185,9 +209,15 @@ class MinimaxEngine:
         """
         The 'Brain' logic: Looks ahead using Minimax/Alpha-Beta.
         """
+        # 1. Abort immediately if interrupted by UCI Handler
+        # Check for stop signal only every 2,048 nodes to preserve Python loop speed
+        if (self.nodes_count & 2047 == 0) and self.stopped:
+            return 0
+
         # Count every node visited upon entering search
         self.nodes_count += 1
-        self._log_node_at_depth(self.ply)
+        if not self.uci_mode:
+            self._log_node_at_depth(self.ply)
 
         if board.is_repetition(2) or board.is_fifty_moves():
             return 0
@@ -231,6 +261,11 @@ class MinimaxEngine:
 
     def _quiescence_search(self, board: chess.Board, is_maximizing: bool, alpha: int | float,
                            beta: int | float):
+        # 1. Abort immediately if interrupted by UCI Handler
+        # Check for stop signal only every 2,048 nodes to preserve Python loop speed
+        if (self.nodes_count & 2047 == 0) and self.stopped:
+            return 0
+
         # Count every node visited upon entering search
         self.nodes_count += 1
 
