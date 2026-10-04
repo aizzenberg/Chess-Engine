@@ -26,6 +26,7 @@ class MinimaxEngine:
         self.first_move_cutoffs = 0  # Cutoffs on index 0
         self.avg_first_move_cutoffs = 0  # Avg accumulator for first move cutoffs
         self.nodes_at_depth = {}  # EBF Tracking: Node counts indexed by depth reached
+        self.seldepth = 0
 
         self.nps_stack = []
         self.time_stack = []
@@ -72,10 +73,13 @@ class MinimaxEngine:
             depth = self.default_depth
 
         # Reset counters for the new search
+        self.ply = 0
         self.nodes_count = 0
         self.eval_count = 0
         self.beta_cutoffs = 0
         self.first_move_cutoffs = 0
+        self.seldepth = 0
+        self.nodes_at_depth = {}
 
         start_time = time()
         self.eval.start_search(board)
@@ -151,6 +155,7 @@ class MinimaxEngine:
 
         print(f"\n--- Search Summary [{self.name}] ---")
         print(f"Time:                {thinking_time:.2f}s")
+        print(f"Selective depth:     {self.seldepth}")
         print(f"Nodes searched:      {self.nodes_count:,}")
         print(f"Leaf evaluations:    {self.eval_count:,}")
         print(f"NPS (Total Nodes):   ~{nps:,} | avg: ~{sum(self.nps_stack) // len(self.nps_stack):,}")
@@ -197,6 +202,7 @@ class MinimaxEngine:
         self.eval.push_move(board, move)
         board.push(move)
         self.ply += 1  # Step forward from root
+        self.seldepth = max(self.seldepth, self.ply)
         try:
             yield
         finally:

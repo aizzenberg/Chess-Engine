@@ -167,11 +167,11 @@ cython_debug/
 
 # Chess engine specific
 *.pgn
+*.epd
 *.fen
 games/
-pgn_files/
+openings/
 logs/
-*.log
 
 # AI/ML specific
 models/

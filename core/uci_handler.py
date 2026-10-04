@@ -132,22 +132,27 @@ class UCIHandler:
             time_ms = int(self.engine.time_stack[-1] * 1000) if self.engine.time_stack else 0
             nps = self.engine.nps_stack[-1] if self.engine.nps_stack else 0
             nodes = self.engine.nodes_count
+            seldepth = self.engine.seldepth
 
-            uci_score = self._format_uci_score(best_score)
+            uci_score = self._format_uci_score(best_score, board.turn == chess.BLACK)
 
             print(
-                f"info depth {depth} {uci_score} nodes {nodes} nps {nps} time {time_ms} pv {best_move.uci()}",
+                f"info depth {depth} seldepth {seldepth} score {uci_score} nodes {nodes} nps {nps} time {time_ms} pv {best_move.uci()}",
                 flush=True
             )
             print(f"bestmove {best_move.uci()}", flush=True)
 
-    def _format_uci_score(self, score: float) -> str:
-        if abs(score) > 99_000:
-            moves = max(1, int((100_000 - abs(score)) // 2))
-            mate_val = moves if score > 0 else -moves
-            return f"score mate {mate_val}"
+    def _format_uci_score(self, score: float, is_black: bool) -> str:
+        # The Universal Chess Interface (UCI) protocol strictly mandates that all evaluations
+        # (score cp X and score mate Y) MUST be reported from the perspective of the Side to Move.
+        uci_score = -score if is_black else score
+
+        if abs(uci_score) > 99_000:
+            moves = max(1, int((100_000 - abs(uci_score)) // 2))
+            mate_val = moves if uci_score > 0 else -moves
+            return f"mate {mate_val}"
         else:
-            return f"score cp {int(score)}"
+            return f"cp {int(uci_score)}"
 
     def _stop_search(self):
         if self._is_searching():
