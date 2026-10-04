@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # Retrieve the build version for readability
+  ENGINE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
+
 jobs:
   build:
     name: Build (${{ matrix.artifact_name }})
@@ -41,6 +45,7 @@ jobs:
           cache: 'pip'
 
       - name: Create Bundle Directory & Install Dependencies
+        shell: bash
         run: |
           mkdir -p ./bundle/app
           
@@ -55,57 +60,121 @@ jobs:
             --exclude='README.md' \
             ./ ./bundle/app/
           
-          # Locate native PyPy installation and copy it preserving symlinks and permissions (-a)
-          PYPY_DIR=$(dirname $(dirname $(which pypy3)))
-          cp -a "$PYPY_DIR" ./bundle/pypy_runtime
+          # Use sys.prefix to find the true installation root.
+          PYPY_ROOT=$(pypy3 -c "import sys; print(getattr(sys, 'base_prefix', sys.prefix))")
+          
+          # Copy the entire installation directory (including lib-python and lib_pypy)
+          cp -a "$PYPY_ROOT" ./bundle/pypy_runtime
           
           # Install dependencies directly into the bundled PyPy runtime
           ./bundle/pypy_runtime/bin/pypy3 -m pip install --no-cache-dir -r ./bundle/app/requirements.txt
 
       - name: Build Atomic Self-Extracting Executable
+        shell: bash
         run: |
+          set -euo pipefail
+          
           mkdir -p dist
           
-          cat << 'EOF' > dist/${{ matrix.artifact_name }}
-          #!/usr/bin/env bash
-          set -e
+          # Ensure we have access to the current engine version
+          if [[ -z "${ENGINE_VERSION:-}" ]]; then
+            echo "ERROR: ENGINE_VERSION is empty. Did the version step run?" >&2
+            exit 1
+          fi
           
-          # 1. Support hardened Linux servers by respecting TMPDIR before defaulting to /tmp
-          BASE_TMP="${TMPDIR:-/tmp}"
+          TARGET=dist/${{ matrix.artifact_name }}
+          
+          cat << 'EOF' > "$TARGET"
+          #!/usr/bin/env bash
+          set -eo pipefail
+          
+          ENGINE_VERSION="__ENGINE_VERSION__"
+          CACHE_NAME="coco-engine"
+          CACHE_RETENTION_DAYS=14
+          
+          # 1. Use a persistent cache directory in the user's home folder.
+          # This prevents macOS/Linux background cleaners from deleting files.
+          CACHE_BASE="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/$CACHE_NAME"
+          mkdir -p "$CACHE_BASE"
           
           # 2. Generate a deterministic SHA-256 / MD5 hash of the actual file content
           CHECKSUM=$( (sha256sum "$0" 2>/dev/null || shasum -a 256 "$0" 2>/dev/null || md5sum "$0" 2>/dev/null || md5 -q "$0" 2>/dev/null) | awk '{print $1}' )
-          CACHE_DIR="${BASE_TMP}/coco-engine-cache-${CHECKSUM}"
           
-          # 3. ATOMIC EXTRACTION: Prevent NimblePool concurrency crashes at server boot
-          if [ ! -f "$CACHE_DIR/.extraction_complete" ]; then
+          CACHE_KEY="${ENGINE_VERSION}-${CHECKSUM:0:16}"
+          CACHE_DIR="$CACHE_BASE/$CACHE_KEY"
+          PYPY_BIN="$CACHE_DIR/pypy_runtime/bin/pypy3"
+          
+          extract_engine() {
+            rm -rf "$CACHE_DIR"
+            
             # Extract to a unique Process ID staging directory first
             STAGING_DIR="${CACHE_DIR}.tmp.$$"
             mkdir -p "$STAGING_DIR"
-          
+            
             # Re-create source code from a compressed binary archive stream we appended
             ARCHIVE_LINE=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
-            tail -n+$ARCHIVE_LINE "$0" | tar xz -C "$STAGING_DIR" 2>/dev/null
-          
+            
+            if ! tail -n+"$ARCHIVE_LINE" "$0" | tar xz -C "$STAGING_DIR"; then
+              echo "ERROR: Failed to extract engine archive." >&2
+              rm -rf "$STAGING_DIR"
+              exit 1
+            fi
+            
             # Place a marker file indicating extraction finished successfully
             touch "$STAGING_DIR/.extraction_complete"
           
-            # Atomically move staging to final cache directory (ignores error if another worker won the race)
+            # Move staging to final cache directory (ignores error if another worker won the race)
             mv -n "$STAGING_DIR" "$CACHE_DIR" 2>/dev/null || true
           
-            # Clean up staging folder if we lost the race to a concurrent worker
+            # Clean up staging folder
             rm -rf "$STAGING_DIR" 2>/dev/null || true
+          }
+          
+          # 3. Extract engine if we haven't done it yet
+          if [ ! -f "$CACHE_DIR/.extraction_complete" ]; then
+            extract_engine
           fi
           
-          # 4. Replace bash process in memory with PyPy, passing Erlang Port pipes and CLI args seamlessly
-          exec "$CACHE_DIR/pypy_runtime/bin/pypy3" "$CACHE_DIR/app/engine.py" "$@"
+          # 4. Self-healing check: if PyPy cannot boot its standard library,
+          # the cache is corrupted or partially deleted. Re-extract it.
+          if ! "$PYPY_BIN" -c "import encodings, sys" 2>/dev/null; then
+            echo "Warning: corrupted engine cache detected; rebuilding..." >&2
+            extract_engine
+          fi
+          
+          # 5. Mark this cache as recently used (avoid retention cleanup).
+          touch "$CACHE_DIR" 2>/dev/null || true
+          
+          # 6. Retention Cleanup for old caches.
+          # This keeps the current cache and any cache used within CACHE_RETENTION_DAYS.
+          find "$CACHE_BASE" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            ! -name "$CACHE_KEY" \
+            -mtime +"$CACHE_RETENTION_DAYS" \
+            -exec rm -rf {} + 2>/dev/null || true
+          
+          # 7. Clean environment 
+          unset PYTHONHOME
+          unset PYTHONPATH
+          unset VIRTUAL_ENV
+          
+          # 8. Replace bash process in memory with PyPy, passing Erlang Port pipes and CLI args seamlessly
+          exec "$PYPY_BIN" "$CACHE_DIR/app/engine.py" "$@"
           exit 0
           __ARCHIVE_BELOW__
           EOF
           
+          # Bake the Git tag / version into the launcher.
+          # This happens before the binary archive is appended, so it is safe.
+          sed "s/__ENGINE_VERSION__/${ENGINE_VERSION}/g" "$TARGET" > "$TARGET.tmp"
+          mv "$TARGET.tmp" "$TARGET"
+
           # Compress bundle and append below bash stub
-          tar czf - -C ./bundle . >> dist/${{ matrix.artifact_name }}
-          chmod +x dist/${{ matrix.artifact_name }}
+          tar czf - -C ./bundle . >> "$TARGET"
+
+          chmod +x "$TARGET"
 
       - name: Upload Artifact for Manual Testing
         uses: actions/upload-artifact@v4
